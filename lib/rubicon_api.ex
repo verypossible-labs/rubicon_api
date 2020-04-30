@@ -2,7 +2,7 @@ defmodule RubiconAPI do
   defmacro __using__(_opts) do
     quote do
       Module.register_attribute __MODULE__, :steps, accumulate: true
-      import RubiconAPI, only: [step: 2, prompt_yn?: 1]
+      import RubiconAPI
       @before_compile unquote(__MODULE__)
 
       def child_spec(opts) do
@@ -32,13 +32,11 @@ defmodule RubiconAPI do
         [do: block] ->
           quote do
             unquote(block)
-            :ok
           end
 
         _ ->
           quote do
             try(unquote(contents))
-            :ok
           end
       end
 
@@ -52,6 +50,23 @@ defmodule RubiconAPI do
   end
 
   def prompt_yn?(message) do
-    GenServer.call(RubiconAPI.Server, {:prompt_yn?, message})
+    GenServer.call({:global, Rubicon.UI}, {:prompt_yn?, message}, 60_000)
+  end
+
+  def firmware_path() do
+    path = "/root/install.fw"
+    if File.exists?("/root/install.fw") do
+      {:ok, path}
+    else
+      with {:ok, data} <- GenServer.call({:global, Rubicon}, :firmware),
+      :ok <- File.write(path, data) do
+        {:ok, path}
+
+      end
+    end
+  end
+
+  def ssl_signer() do
+    GenServer.call({:global, Rubicon}, :ssl_signer)
   end
 end

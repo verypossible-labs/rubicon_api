@@ -13,7 +13,6 @@ defmodule RubiconAPI.Server do
 
     {:ok, %{
       status: :disconnected,
-      timer_ref: nil,
       host_address: nil,
       host_node: nil,
       ifname: ifname,
@@ -22,20 +21,15 @@ defmodule RubiconAPI.Server do
     }, {:continue, VintageNet.get(["interface", ifname, "lower_up"])}}
   end
 
-  def handle_continue(true, s), do: {:noreply, connect(s)}
+  def handle_continue(true, s) do
+    Process.send_after(self(), :connect, 1_000)
+    {:noreply, s}
+  end
   def handle_continue(false, s), do: {:noreply, s}
 
-  def handle_call({:prompt_yn?, _message}, _from, %{host_node: nil} = s) do
-    {:reply, {:error, :no_connection}, s}
-  end
-
-  def handle_call({:prompt_yn?, message}, _from, %{host_node: node} = s) do
-    reply = :rpc.block_call(node, Rubicon, :prompt_yn?, [message])
-    {:reply, reply, s}
-  end
-
   def handle_info({VintageNet, ["interface", ifname, "lower_up"], false, true, %{}}, %{ifname: ifname} = s) do
-    {:noreply, connect(s)}
+    Process.send_after(self(), :connect, 1_000)
+    {:noreply, s}
   end
 
   def handle_info({VintageNet, ["interface", ifname, "lower_up"], true, false, %{}}, %{ifname: ifname} = s) do
@@ -52,9 +46,12 @@ defmodule RubiconAPI.Server do
       host_node = :"rubicon@#{host_address}"
       {:ok, _pid} = Node.start(my_node)
       Logger.debug "Node started #{inspect my_node}"
+      Process.send_after(self(), :connect, 1_000)
       {:noreply, %{s | host_node: host_node, status: :connected}}
     else
-      _ -> {:noreply, s}
+      _ ->
+        Process.send_after(self(), :connect, 1_000)
+        {:noreply, s}
     end
   end
 
@@ -62,15 +59,17 @@ defmodule RubiconAPI.Server do
     Logger.debug "Connecting to #{inspect host_node}"
     s =
       if Node.connect(host_node) do
-          :timer.cancel(s.timer_ref)
-          :timer.sleep(100)
           steps = s.mod.__rubicon_steps__()
-          handshake(host_node, steps)
-          run_steps(%{s | host_node: host_node, steps: steps})
+          wait_for_rubicon(%{s | host_node: host_node, steps: steps})
       else
+        Process.send_after(self(), :connect, 1_000)
         s
       end
     {:noreply, s}
+  end
+
+  def handle_info(:wait_for_rubicon, s) do
+    {:noreply, wait_for_rubicon(s)}
   end
 
   def handle_info(message, status) do
@@ -78,26 +77,30 @@ defmodule RubiconAPI.Server do
     {:noreply, status}
   end
 
-  defp connect(s) do
-    {:ok, timer_ref} = :timer.send_interval(1000, :connect)
-    %{s | timer_ref: timer_ref}
+  def terminate(_reason, s) do
+    Node.stop()
+    {:stop, s}
   end
 
-  defp disconnect(%{timer_ref: nil} = s) do
+  defp disconnect(s) do
     Node.stop()
     %{s | status: :disconnected, host_address: nil, host_node: nil}
   end
 
-  defp disconnect(%{timer_ref: timer_ref} = s) do
-    :timer.cancel(timer_ref)
-    disconnect(%{s | timer_ref: nil})
-  end
-
-  defp run_steps(%{host_node: node, mod: mod, steps: steps} = s) do
-    Enum.each(steps, fn(step) ->
-      result = apply(mod, :"#{step}", [])
-      step_result(node, step, result)
-    end)
+  defp run_steps(%{mod: mod, steps: steps} = s) do
+    {status, results} =
+      Enum.reduce_while(steps, {:pass, []}, fn(step, {status, results}) ->
+        result = apply(mod, :"#{step}", [])
+        step_result(step, result)
+        case result do
+          :ok ->
+            {:cont, {status, [{step, :ok} | results]}}
+          {:error, error} ->
+            {:halt, {:fail, [{step, {:error, error}} | results]}}
+        end
+      end)
+    Logger.debug "Device status #{inspect status}"
+    GenServer.call({:global, Rubicon}, {:finished, status, results})
     s
   end
 
@@ -109,11 +112,23 @@ defmodule RubiconAPI.Server do
 
   defp subtract_one({a, b, c, d}), do: {a, b, c, d - 1}
 
-  defp handshake(node, handshake) do
-    :rpc.block_call(node, Rubicon, :handshake, [handshake])
+  defp handshake(handshake) do
+    GenServer.call({:global, Rubicon}, {:handshake, handshake}, :infinity)
   end
 
-  defp step_result(node, step, result) do
-    :rpc.block_call(node, Rubicon, :step_result, [step, result])
+  defp step_result(step, result) do
+    GenServer.call({:global, Rubicon}, {:step_result, step, result})
+  end
+
+  defp wait_for_rubicon(%{steps: steps} = s) do
+    case :global.whereis_name(Rubicon) do
+      pid when is_pid(pid) ->
+        handshake(steps)
+        run_steps(s)
+
+      _ ->
+        Process.send_after(self(), :wait_for_rubicon, 1_000)
+        s
+    end
   end
 end
