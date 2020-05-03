@@ -58,7 +58,7 @@ defmodule RubiconAPI do
     if File.exists?("/root/install.fw") do
       {:ok, path}
     else
-      with {:ok, data} <- GenServer.call({:global, Rubicon}, :firmware),
+      with {:ok, data} <- GenServer.call({:global, Rubicon}, :firmware, 15_000),
       :ok <- File.write(path, data) do
         {:ok, path}
 
