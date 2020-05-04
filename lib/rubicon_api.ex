@@ -59,7 +59,7 @@ defmodule RubiconAPI do
       {:ok, path}
     else
       with {:ok, data} <- GenServer.call({:global, Rubicon}, :firmware, 15_000),
-      :ok <- File.write(path, data) do
+      :ok <- File.write(path, data, [:write, :sync]) do
         {:ok, path}
 
       end
