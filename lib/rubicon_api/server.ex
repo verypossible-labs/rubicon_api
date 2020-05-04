@@ -95,6 +95,8 @@ defmodule RubiconAPI.Server do
         case result do
           :ok ->
             {:cont, {status, [{step, :ok} | results]}}
+          {:ok, info} ->
+            {:cont, {status, [{step, {:ok, info}} | results]}}
           {:error, error} ->
             {:halt, {:fail, [{step, {:error, error}} | results]}}
         end
