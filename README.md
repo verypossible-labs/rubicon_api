@@ -44,5 +44,8 @@ The following functions are API calls to the rubicon host and are available
 to use in any defined step.
 
 `prompt_yn`: Prompt a message and wait for a reply. The reply will be `:yes/:no`
+`prompt`: Prompt a message.
+`promp_cleart`: Clear the prompt.
+`step_status`: Render a step status message to the top right message.
 `ssl_signer`: Receive the cert and key for signing the HSM.
 `firmware_path`: Receive the final firmware and save it to a local path.

@@ -69,4 +69,17 @@ defmodule RubiconAPI do
   def ssl_signer() do
     GenServer.call({:global, Rubicon}, :ssl_signer)
   end
+
+  def step_status(status) do
+    GenServer.call({:global, Rubicon.UI}, {:set_status, :right, status})
+  end
+
+  def prompt(prompt) do
+    GenServer.call({:global, Rubicon.UI}, {:prompt, prompt})
+  end
+
+  def prompt_clear() do
+    GenServer.call({:global, Rubicon.UI}, :prompt_clear)
+  end
+
 end
